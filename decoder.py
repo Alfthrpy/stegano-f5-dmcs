@@ -7,9 +7,9 @@ import os.path
 from Crypto.Cipher import AES
 import simplejpeg
 
-from . import sdcs
-from . import stc
-from . import rs
+from sdcs import sdcs
+from stc import stc
+from rs import rs
 
 #############################################
 
@@ -644,16 +644,15 @@ class decoder:
                 char = ''
         return message
 
-    def retrievePath(self, key):
-        if os.path.isfile("path_key.bin"):
-            file_in = open("path_key.bin", "rb")
-            nonce, tag, ciphertext = [ file_in.read(x) for x in (16,16,-1) ]
-
-            cipher = AES.new(key, AES.MODE_EAX, nonce)
-            data = cipher.decrypt_and_verify(ciphertext, tag)
-            path = data.decode()
+    def retrievePath(self, key, path_file):
+        if os.path.isfile(path_file):
+            with open(path_file, "rb") as file_in:
+                nonce, tag, ciphertext = [file_in.read(x) for x in (16, 16, -1)]
+                cipher = AES.new(key, AES.MODE_EAX, nonce)
+                data = cipher.decrypt_and_verify(ciphertext, tag)
+                path = data.decode()
         else:
-            raise FileNotFoundError("Can't find path file - ensure it is named 'path_key.bin'")
+            raise FileNotFoundError(f"Can't find path file - ensure it is named '{path_file}'")
         return np.array(list(path))
 
     def formatPathF5(self, path):
@@ -720,7 +719,8 @@ class decoder:
                 return new_path, parity_polys
         return new_path
          
-    def decode(self, img, key, func=2, verbose=True, use_rs=True, output_file="stego", greyscale=False):
+    def decode(self, img, path_key_bin, key, func=0, verbose=False, use_rs=True, output_file="stego", greyscale=False):
+        print("jalan method decode")
         if verbose:
             with open(img, 'r') as f:
                 bitstring = f.read()
@@ -734,7 +734,7 @@ class decoder:
             self.hor_block_count = self.img_width // self.BLOCK_SIZE
             self.ver_block_count = self.img_height // self.BLOCK_SIZE
 
-            hash_path = self.retrievePath(key)
+            hash_path = self.retrievePath(key,path_key_bin)
             # extract data from Huffman encoding
             Y_decoded_img, Cb_decoded_img, Cr_decoded_img = self.huffmanDecode(bitstring)
             print("finished decode")
@@ -798,11 +798,11 @@ class decoder:
             encoder_obj = encoder(self.BLOCK_SIZE, self.RS_PARAM)
             encoder_obj.defineBlockCount(self.ver_block_count, self.hor_block_count)
             if not greyscale:
-                with open(img+".jpg", "rb") as f:
+                with open(img, "rb") as f:
                     jpg_img = simplejpeg.decode_jpeg(f.read(), 'BGR', False, False)
                     jpg_img = cv2.cvtColor(jpg_img, cv2.COLOR_BGR2YCR_CB)
             else:
-                jpg_img = cv2.imread(img+".jpg", cv2.IMREAD_GRAYSCALE)
+                jpg_img = cv2.imread(img, cv2.IMREAD_GRAYSCALE)
             self.img_height, self.img_width = self.getImageDimensions(jpg_img)
             encoder_obj.defineImgDim(self.img_height, self.img_width)
             if self.img_width % self.BLOCK_SIZE != 0:
@@ -818,21 +818,21 @@ class decoder:
                 img = encoder_obj.blockify([Y_img, Cb_img, Cr_img])
             else:
                 img = encoder_obj.blockify([jpg_img])
-            #print("Separated successfully")
+            print("Separated successfully")
 
-            #print("beginning dct...")
+            print("beginning dct...")
             img = encoder_obj.DCT_2(img)
-            #print("finished dct")
+            print("finished dct")
 
             img = encoder_obj.quantizeAndRound(img)
-            #print("finished quantization and round")
+            print("finished quantization and round")
 
             img = encoder_obj.zigZagEncode(img)
-            #print("finished zigzag")
+            print("finished zigzag")
 
             img = [np.reshape(channel, (total_blocks, self.BLOCK_SIZE * self.BLOCK_SIZE)) for channel in img]
 
-            hash_path = self.retrievePath(key)
+            hash_path = self.retrievePath(key,path_key_bin)
 
             if func == 0:
                 msg_path = self.formatPathF5(hash_path)
@@ -856,12 +856,11 @@ class decoder:
                     message += ''.join([chr(x) for x in corrected_message[:len(corrected_message)-(rs_obj.T*2)]])
             else:
                 message = self.extractMsgTxt(message)
-                #print("non-rs extracted message:", message)
-            return message
+                print("non-rs extracted message:", message)
             with open(output_file+".txt", 'w', encoding="utf-8") as f:
                 f.write(message)
             print("message extracted successfully")
-            exit(0)
+            return message
 
 ########################################
 ########PROGRAM BEGINS HERE#############

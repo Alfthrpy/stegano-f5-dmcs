@@ -1,1 +1,9 @@
-/.venv
+.stegenv/**
+.vscode/**
+images/**
+.imgdim
+.v_imgdim
+.msgpath
+jpeg.txt
+.imgdim
+.v_imgdim

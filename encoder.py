@@ -8,9 +8,9 @@ import simplejpeg
 from random import randrange, choice
 from timeit import default_timer as timer
 
-from . import sdcs
-from . import stc
-from . import rs
+from sdcs import sdcs
+from stc import stc
+from rs import rs
 
 # to-do:
 # 1. enable program to work with any image dimension //done?
@@ -865,20 +865,25 @@ class encoder:
                 + str(bit_loc[3]).zfill(2) + '00'
         return path_string
 
-    def hashPath(self, path):
+    def hashPath(self, path, key):
         byte_path = str.encode(path)
-        key = b'Sixteen byte key'
-        #print("Your key is: ", key.decode())
+        if isinstance(key, str):
+            print("terendcode")
+            key = key.encode()
+        # Ensure key is 16, 24, or 32 bytes for AES
+        if len(key) not in (16, 24, 32):
+            raise ValueError("Key must be 16, 24, or 32 bytes long for AES.")
         cipher = AES.new(key, AES.MODE_EAX)
         ciphertext, tag = cipher.encrypt_and_digest(byte_path)
 
-        file_out = open("path_key.bin", "wb")
-        [ file_out.write(x) for x in (cipher.nonce, tag, ciphertext) ]
-        file_out.close()
+        with open("path_key.bin", "wb") as file_out:
+            file_out.write(cipher.nonce)
+            file_out.write(tag)
+            file_out.write(ciphertext)
 
         return 0
 
-    def encode(self, img_name, message_path, func=2, verbose=True, use_rs=True, output_name="stego"):
+    def encode(self, img_name, message_string, key, func=0, verbose=False, use_rs=True, output_name="stego"):
         img, greyscale = self.__readImage(img_name)
         if not greyscale:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
@@ -914,12 +919,7 @@ class encoder:
         #print("finished zigzag")
 
         #print("encoding message...")
-        try:
-            with open(message_path, 'r') as f:
-                message = f.read()
-        except:
-            raise FileNotFoundError('Could not find message file, is the path correct?')
-        bin_msg = self.messageConv(message)
+        bin_msg = self.messageConv(message_string)
         if use_rs:
             rs_obj = rs(self.RS_PARAM)
             message_polys = rs_obj.prepareMessage(bin_msg)
@@ -941,7 +941,7 @@ class encoder:
         
         else:
             raise ValueError('Algorithm must be:\n0: F5\n1: SDCS F5\n2: drF5')
-        self.hashPath(hash_path)
+        self.hashPath(hash_path,key)
         #print("encoded and written path to file")
 
         if verbose:
@@ -956,7 +956,7 @@ class encoder:
             print("done!")
         
         else:
-            from . import decoder
+            from decoder import decoder
             decoder_obj = decoder(self.BLOCK_SIZE, self.RS_PARAM)
             decoder_obj.defineBlockCount(self.ver_block_count, self.hor_block_count)
             img = [channel.reshape((total_blocks, self.BLOCK_SIZE*self.BLOCK_SIZE)) for channel in img]

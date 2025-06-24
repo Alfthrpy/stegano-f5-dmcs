@@ -1,197 +1,219 @@
 import streamlit as st
 import os
-import tempfile
-from PIL import Image
-import io
-import traceback  # Tambahkan di bagian atas file
+from encoder import encoder
+from decoder import decoder
 
-# Pastikan Anda sudah membuat direktori stegano_core
-# dan menempatkan semua file .py dari repo di sana.
-from bulbul.encoder import encoder as encoder_class
-from bulbul.decoder import decoder as decoder_class
+# --- Konfigurasi Halaman ---
+st.set_page_config(
+    page_title="Steganography App",
+    page_icon="🔒",
+    layout="wide"
+)
+
+st.title("Aplikasi Steganografi F5 & optimDMCSS")
+st.caption("Dibuat oleh AI untuk Muhammad Rizki Al-Fathir")
 
 
-# Inisialisasi objek encoder dan decoder
-# BLOCK_SIZE dan RS_PARAM bisa disesuaikan jika perlu
-# Nilai default dari repo adalah (8, 256)
-encoder_obj = encoder_class(8, 256)
-decoder_obj = decoder_class(8, 256)
+# --- Inisialisasi Session State ---
+# Ini untuk menyimpan hasil agar tidak hilang saat script rerun
+if 'stego_image_bytes' not in st.session_state:
+    st.session_state.stego_image_bytes = None
+if 'path_key_bytes' not in st.session_state:
+    st.session_state.path_key_bytes = None
 
-def embed_message_in_image(cover_image_bytes, message_string):
+
+# --- Pilihan Mode di Sidebar ---
+mode = st.sidebar.radio("Pilih Mode:", ("Embed (Sembunyikan Pesan)", "Extract (Ekstrak Pesan)"))
+
+# --- Direktori Temporary untuk Menyimpan File ---
+TEMP_DIR = "temp_files"
+if not os.path.exists(TEMP_DIR):
+    os.makedirs(TEMP_DIR)
+
+# --- Opsi Algoritma ---
+ALGO_OPTIONS = {
+    "F5": 0,
+    "optimDMCSS": 2
+}
+
+def clear_embed_results():
     """
-    Fungsi pembungkus untuk menyematkan pesan ke dalam gambar.
-    Bekerja dengan data bytes di memori.
+    Mengatur ulang session state DAN menghapus file fisik yang tersisa
+    dari proses embed sebelumnya.
     """
+    # --- Langkah 1: Hapus file fisik dari direktori ---
+    stego_image_path = os.path.join(TEMP_DIR, "output_stego.jpg")
+    path_key_path = "path_key.bin"  # File ini ada di direktori utama
+
+    # Hapus gambar stego jika ada
     try:
-        # Buat file temporer untuk gambar sampul dan pesan
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_cover_file:
-            temp_cover_file.write(cover_image_bytes)
-            temp_cover_path = temp_cover_file.name
-
-        with tempfile.NamedTemporaryFile(delete=False, mode="w+", suffix=".txt") as temp_msg_file:
-            temp_msg_file.write(message_string)
-            temp_msg_path = temp_msg_file.name
-        
-        # Tentukan path output temporer
-        output_dir = tempfile.gettempdir()
-        output_stego_path = os.path.join(output_dir, "stego_image.jpg")
-        
-        # Panggil metode encode dari library
-        # func=0 adalah untuk algoritma F5 standar
-        # verbose=False agar outputnya adalah file gambar, bukan .txt
-        # use_rs=False agar tidak menggunakan Reed-Solomon (sesuai permintaan F5 standar)
-        encoder_obj.encode(
-            img_name=temp_cover_path,
-            message_path=temp_msg_path,
-            func=0, 
-            verbose=False, 
-            use_rs=False,
-            output_name=os.path.join(output_dir, "stego_image") # nama tanpa ekstensi
-        )
-
-        # Metode encode menghasilkan 'path_key.bin' di direktori kerja.
-        # Kita perlu memindahkannya atau membacanya.
-        key_path_original = "path_key.bin"
-        
-        # Baca gambar stego dan kunci yang dihasilkan ke dalam memori
-        with open(output_stego_path, "rb") as f:
-            stego_image_bytes = f.read()
-
-        with open(key_path_original, "rb") as f:
-            key_bytes = f.read()
-
-        # Hapus file temporer
-        os.remove(temp_cover_path)
-        os.remove(temp_msg_path)
-        os.remove(output_stego_path)
-        os.remove(key_path_original)
-        
-        return stego_image_bytes, key_bytes
-
+        if os.path.exists(stego_image_path):
+            os.remove(stego_image_path)
     except Exception as e:
-        # Bersihkan file temporer jika terjadi error
-        if 'temp_cover_path' in locals() and os.path.exists(temp_cover_path):
-            os.remove(temp_cover_path)
-        if 'temp_msg_path' in locals() and os.path.exists(temp_msg_path):
-            os.remove(temp_msg_path)
-        st.error(f"Terjadi kesalahan saat embedding: {e}")
-        st.text(traceback.format_exc())
-        print
-        st.info("Pastikan pesan tidak terlalu panjang untuk ukuran gambar yang diberikan.")
-        return None, None
+        st.warning(f"Gagal menghapus file gambar stego: {e}")
 
-
-def extract_message_from_image(stego_image_bytes, key_bytes):
-    """
-    Fungsi pembungkus untuk mengekstrak pesan dari gambar.
-    """
+    # Hapus file path_key.bin jika ada
     try:
-        # Buat file temporer untuk gambar stego dan kuncinya
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_stego_file:
-            temp_stego_file.write(stego_image_bytes)
-            temp_stego_path = temp_stego_file.name
-
-        # Nama file kunci harus 'path_key.bin' karena di-hardcode di decoder
-        with open("path_key.bin", "wb") as temp_key_file:
-            temp_key_file.write(key_bytes)
-            
-        # Panggil metode decode dari library
-        # output_file adalah nama untuk file teks hasil ekstraksi
-        extracted_message = decoder_obj.decode(
-            img=os.path.splitext(temp_stego_path)[0], # nama tanpa ekstensi
-            key=b'kunci-rahasia-tidak-digunakan-di-sini-tapi-wajib-ada', # placeholder, karena path dienkripsi
-            func=0,
-            verbose=False,
-            use_rs=False,
-            output_file="extracted_message"
-        )
-
-        # Hapus file temporer
-        os.remove(temp_stego_path)
-        os.remove("path_key.bin")
-        
-        return extracted_message
-
-    except FileNotFoundError:
-        st.error("Gagal menemukan file 'path_key.bin'. Pastikan file kunci yang benar telah diunggah.")
-        # Hapus file sisa jika ada
-        if 'temp_stego_path' in locals() and os.path.exists(temp_stego_path):
-            os.remove(temp_stego_path)
-        if os.path.exists("path_key.bin"):
-            os.remove("path_key.bin")
-        return None
+        if os.path.exists(path_key_path):
+            os.remove(path_key_path)
     except Exception as e:
-        st.error(f"Terjadi kesalahan saat ekstraksi: {e}")
-        return None
+        st.warning(f"Gagal menghapus file kunci path: {e}")
 
-
-# --- UI STREAMLIT ---
-st.set_page_config(layout="wide", page_title="Aplikasi Steganografi F5")
-
-st.title("🖼️ Aplikasi Steganografi F5")
-st.write("Aplikasi ini menggunakan algoritma F5 untuk menyembunyikan pesan di dalam gambar JPEG.")
-st.write("---")
-
-# Gunakan kolom untuk tata letak yang lebih baik
-col1, col2 = st.columns(2)
-
-with col1:
-    st.header("1. Sematkan Pesan (Embed)")
+    # --- Langkah 2: Atur ulang session state seperti sebelumnya ---
+    st.session_state.stego_image_bytes = None
+    st.session_state.path_key_bytes = None
     
-    cover_image_upload = st.file_uploader("Unggah Gambar Sampul (Cover Image)", type=['png', 'jpg', 'jpeg', 'bmp'])
-    message_text = st.text_area("Masukkan Pesan Rahasia Anda di Sini")
-    
-    embed_button = st.button("Sematkan Pesan!", key="embed")
+    # Beri notifikasi bahwa pembersihan berhasil
+    st.toast("Hasil dan file sementara telah dibersihkan.")
 
-    if embed_button and cover_image_upload and message_text:
-        with st.spinner("Sedang memproses... Ini mungkin memakan waktu beberapa saat."):
-            cover_bytes = cover_image_upload.getvalue()
-            
-            stego_bytes, key_bytes = embed_message_in_image(cover_bytes, message_text)
-            
-            if stego_bytes and key_bytes:
-                st.session_state.stego_image = stego_bytes
-                st.session_state.key = key_bytes
-                st.success("Pesan berhasil disematkan!")
+if mode == "Embed (Sembunyikan Pesan)":
+    st.header("🖼️ Mode Embed: Sembunyikan Pesan ke dalam Gambar")
 
-    if 'stego_image' in st.session_state and 'key' in st.session_state:
-        st.subheader("Hasil Embedding")
-        st.image(st.session_state.stego_image, caption="Gambar Stego (Sudah berisi pesan)")
-        
-        # Tombol download untuk gambar stego dan kunci
-        st.download_button(
-            label="Unduh Gambar Stego (.jpg)",
-            data=st.session_state.stego_image,
-            file_name="stego_image.jpg",
-            mime="image/jpeg"
-        )
-        st.download_button(
-            label="️Unduh File Kunci (.bin)",
-            data=st.session_state.key,
-            file_name="path_key.bin",
-            mime="application/octet-stream"
-        )
-        st.warning("**PENTING**: Simpan file kunci! Anda membutuhkannya untuk mengekstrak pesan.")
+    col1, col2 = st.columns(2)
 
+    with col1:
+        st.subheader("Upload Gambar Asli (Cover)")
+        uploaded_cover_image = st.file_uploader("Pilih file gambar...", type=["jpg", "jpeg", "png"])
 
-with col2:
-    st.header("2. Ekstrak Pesan (Extract)")
-    
-    stego_image_upload = st.file_uploader("Unggah Gambar Stego", type=['jpg', 'jpeg'])
-    key_file_upload = st.file_uploader("Unggah File Kunci (.bin)", type=['bin'])
-    
-    extract_button = st.button("Ekstrak Pesan!", key="extract")
+        st.subheader("Pilih Opsi")
+        selected_algo_name = st.selectbox("Pilih Algoritma Steganografi:", ALGO_OPTIONS.keys())
+        use_rs = st.checkbox("Gunakan Reed-Solomon untuk koreksi kesalahan?", value=True)
 
-    if extract_button and stego_image_upload and key_file_upload:
-        with st.spinner("Mengekstrak pesan..."):
-            stego_bytes = stego_image_upload.getvalue()
-            key_bytes = key_file_upload.getvalue()
-            
-            extracted_msg = extract_message_from_image(stego_bytes, key_bytes)
-            
-            if extracted_msg:
-                st.success("Pesan berhasil diekstrak!")
-                st.subheader("Pesan yang Ditemukan:")
-                st.code(extracted_msg, language=None) # Tampilkan dalam blok kode agar mudah dibaca
+    with col2:
+        st.subheader("Masukkan Pesan & Kunci")
+        message = st.text_area("Pesan Rahasia:")
+        key = st.text_input("Kunci Rahasia (16, 24, atau 32 karakter)", type="password")
+
+    if st.button("Sembunyikan Pesan", type="primary"):
+        # Reset state sebelumnya saat tombol ditekan lagi
+        st.session_state.stego_image_bytes = None
+        st.session_state.path_key_bytes = None
+
+        if uploaded_cover_image and message and key:
+            if len(key) not in [16, 24, 32]:
+                st.error("Error: Panjang kunci harus 16, 24, atau 32 karakter.")
             else:
-                st.error("Ekstraksi gagal. Pastikan gambar stego dan file kunci sudah benar.")
+                with st.spinner("Memproses gambar dan menyembunyikan pesan... Ini mungkin memakan waktu beberapa saat."):
+                    try:
+                        cover_image_path = os.path.join(TEMP_DIR, uploaded_cover_image.name)
+                        with open(cover_image_path, "wb") as f:
+                            f.write(uploaded_cover_image.getbuffer())
+
+                        enc = encoder(block_size=8, rs_param=256)
+                        enc.encode(
+                            img_name=cover_image_path,
+                            message_string=message,
+                            key=key.encode('utf-8'),
+                            func=ALGO_OPTIONS[selected_algo_name],
+                            verbose=False,
+                            use_rs=use_rs,
+                            output_name=os.path.join(TEMP_DIR, "output_stego")
+                        )
+
+                        # --- SIMPAN HASIL KE SESSION STATE ---
+                        stego_image_path = os.path.join(TEMP_DIR, "output_stego.jpg")
+                        path_key_path = "path_key.bin"
+
+                        with open(stego_image_path, "rb") as f_img:
+                            st.session_state.stego_image_bytes = f_img.read()
+                        with open(path_key_path, "rb") as f_key:
+                            st.session_state.path_key_bytes = f_key.read()
+
+                    except Exception as e:
+                        st.error(f"Terjadi kesalahan saat embedding: {e}")
+        else:
+            st.warning("Harap lengkapi semua input: upload gambar, isi pesan, dan masukkan kunci.")
+
+    # --- Tampilkan hasil JIKA ada di session_state ---
+    # Blok ini sekarang ada di luar 'if st.button'
+    if st.session_state.stego_image_bytes and st.session_state.path_key_bytes:
+        st.success("Pesan berhasil disembunyikan! Unduh file di bawah ini.")
+
+        # Gunakan kolom untuk menata hasil
+        res_col1, res_col2 = st.columns([1, 2])
+
+        with res_col1:
+            st.subheader("Hasil:")
+            st.image(st.session_state.stego_image_bytes, caption="Gambar Stego")
+
+        with res_col2:
+            st.subheader("Download Files:")
+            st.info("PENTING: Anda memerlukan **kedua file** di bawah ini untuk mengekstrak pesan kembali.")
+
+            # Tombol download sekarang menggunakan data dari session state
+            st.download_button(
+                label="⬇️ Download Gambar Stego (.jpg)",
+                data=st.session_state.stego_image_bytes,
+                file_name="stego_image.jpg",
+                mime="image/jpeg",
+                key="download_stego_img" # Tambahkan key unik
+            )
+            st.download_button(
+                label="🔑 Download Kunci Path (.bin)",
+                data=st.session_state.path_key_bytes,
+                file_name="path_key.bin",
+                mime="application/octet-stream",
+                key="download_path_key" # Tambahkan key unik
+            )
+
+            st.divider()
+
+            # Tombol untuk menghapus hasil secara manual
+            st.button("Hapus Hasil & Mulai Lagi", on_click=clear_embed_results, type="secondary")
+
+
+        
+        st.info("PENTING: Anda memerlukan **kedua file** di atas untuk mengekstrak pesan kembali.")
+
+
+# Kode untuk mode 'Extract' tidak perlu diubah, jadi saya akan memotongnya agar ringkas.
+# Pastikan Anda menyalin seluruh kode yang sudah Anda miliki untuk bagian ini.
+elif mode == "Extract (Ekstrak Pesan)":
+    st.header("🔍 Mode Extract: Ekstrak Pesan dari Gambar")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Upload File")
+        uploaded_stego_image = st.file_uploader("Upload Gambar Stego (.jpg)", type=["jpg", "jpeg"])
+        uploaded_path_key = st.file_uploader("Upload File Kunci Path (.bin)", type=["bin"])
+
+    with col2:
+        st.subheader("Masukkan Kunci & Opsi")
+        key_extract = st.text_input("Kunci Rahasia:", type="password")
+        selected_algo_name_extract = st.selectbox("Algoritma yang digunakan saat embed:", ALGO_OPTIONS.keys())
+        use_rs_extract = st.checkbox("Apakah Reed-Solomon digunakan saat embed?", value=True)
+    
+    st.info("Pastikan Kunci, Algoritma, dan opsi Reed-Solomon sama persis seperti saat proses embed.")
+
+    if st.button("Ekstrak Pesan", type="primary"):
+        if uploaded_stego_image and uploaded_path_key and key_extract:
+            with st.spinner("Membaca gambar dan mengekstrak pesan..."):
+                try:
+                    stego_image_path = os.path.join(TEMP_DIR, "uploaded_stego.jpg")
+                    path_key_path = "path_key.bin"
+
+                    with open(stego_image_path, "wb") as f:
+                        f.write(uploaded_stego_image.getbuffer())
+                    with open(path_key_path, "wb") as f:
+                        f.write(uploaded_path_key.getbuffer())
+
+                    dec = decoder(block_size=8, rs_param=256)
+                    message_out = dec.decode(
+                        img=stego_image_path,
+                        path_key_bin=path_key_path,
+                        key=key_extract.encode('utf-8'),
+                        func=ALGO_OPTIONS[selected_algo_name_extract],
+                        use_rs=use_rs_extract,
+                        greyscale=False
+                    )
+
+                    st.success("Pesan berhasil diekstrak!")
+                    st.subheader("Pesan yang Ditemukan:")
+                    st.text_area("", value=message_out, height=200, disabled=True)
+
+                except Exception as e:
+                    st.error(f"Gagal mengekstrak pesan. Error: {e}")
+                    st.warning("Pastikan kunci, algoritma, dan file yang diupload sudah benar.")
+        else:
+            st.warning("Harap lengkapi semua input: upload gambar stego, file kunci, dan masukkan kunci.")
